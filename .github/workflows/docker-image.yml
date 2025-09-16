@@ -45,7 +45,7 @@ jobs:
           context: .
           file: ./Dockerfile
           platforms: linux/amd64
-          tags: docker.io/kingkalau/kingkatv-danmu:${{ github.event.inputs.tag || 'latest' }}
+          tags: docker.io/kingkalau/kingkatv-newtv-danmu:${{ github.event.inputs.tag || 'latest' }}
           push: true
           no-cache: true
           pull: true
