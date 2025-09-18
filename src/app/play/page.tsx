@@ -158,16 +158,21 @@ function PlayPageClient() {
   // 从数据库加载弹幕配置
   useEffect(() => {
     const loadDanmakuConfig = async () => {
+      console.log('开始加载弹幕配置...');
       const authInfo = getAuthInfoFromBrowserCookie();
       if (!authInfo?.username) {
         // 未登录用户，使用localStorage作为后备
         if (typeof window !== 'undefined') {
           const v = localStorage.getItem('enable_external_danmu');
           if (v !== null) {
-            setExternalDanmuEnabled(v === 'true');
+            const enabled = v === 'true';
+            setExternalDanmuEnabled(enabled);
+            externalDanmuEnabledRef.current = enabled; // 立即同步到ref
+            console.log('未登录用户，从localStorage加载弹幕配置:', enabled);
           }
         }
         setDanmakuConfigLoaded(true);
+        console.log('弹幕配置加载完成（未登录用户）');
         return;
       }
 
@@ -175,6 +180,8 @@ function PlayPageClient() {
         const config = await getDanmakuConfig();
         if (config) {
           setExternalDanmuEnabled(config.externalDanmuEnabled);
+          externalDanmuEnabledRef.current = config.externalDanmuEnabled; // 立即同步到ref
+          console.log('从数据库加载弹幕配置:', config.externalDanmuEnabled);
         } else {
           // 数据库中没有配置，使用localStorage作为后备
           if (typeof window !== 'undefined') {
@@ -182,6 +189,8 @@ function PlayPageClient() {
             if (v !== null) {
               const enabled = v === 'true';
               setExternalDanmuEnabled(enabled);
+              externalDanmuEnabledRef.current = enabled; // 立即同步到ref
+              console.log('数据库无配置，从localStorage加载弹幕配置:', enabled);
               // 同步到数据库
               await saveDanmakuConfig({ externalDanmuEnabled: enabled });
             }
@@ -193,11 +202,15 @@ function PlayPageClient() {
         if (typeof window !== 'undefined') {
           const v = localStorage.getItem('enable_external_danmu');
           if (v !== null) {
-            setExternalDanmuEnabled(v === 'true');
+            const enabled = v === 'true';
+            setExternalDanmuEnabled(enabled);
+            externalDanmuEnabledRef.current = enabled; // 立即同步到ref
+            console.log('配置加载失败，从localStorage加载弹幕配置:', enabled);
           }
         }
       } finally {
         setDanmakuConfigLoaded(true);
+        console.log('弹幕配置加载完成，最终状态:', externalDanmuEnabledRef.current);
         // 配置加载完成后，更新按钮状态
         setTimeout(() => {
           if (updateButtonStateRef.current) {
@@ -403,6 +416,8 @@ function PlayPageClient() {
   // 弹幕加载状态管理，防止重复加载
   const danmuLoadingRef = useRef<boolean>(false);
   const lastDanmuLoadKeyRef = useRef<string>('');
+  // 全局弹幕加载锁，防止多个地方同时加载弹幕导致重复
+  const danmuGlobalLoadingRef = useRef<boolean>(false);
   // 防抖保存弹幕配置的定时器
   const saveConfigTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const configUpdateTimeoutRef = useRef<NodeJS.Timeout | null>(null);
@@ -1035,6 +1050,12 @@ function PlayPageClient() {
 
   // 加载外部弹幕数据（带缓存和防重复）
   const loadExternalDanmu = async (): Promise<any[]> => {
+    // 检查全局加载锁，防止多个地方同时加载弹幕
+    if (danmuGlobalLoadingRef.current) {
+      console.log('弹幕正在全局加载中，跳过重复请求');
+      return [];
+    }
+
     if (!externalDanmuEnabledRef.current) {
       console.log('外部弹幕开关已关闭');
       return [];
@@ -1068,6 +1089,8 @@ function PlayPageClient() {
       return [];
     }
 
+    // 设置全局加载锁
+    danmuGlobalLoadingRef.current = true;
     danmuLoadingRef.current = true;
     lastDanmuLoadKeyRef.current = requestKey;
 
@@ -1182,6 +1205,8 @@ function PlayPageClient() {
     } finally {
       // 重置加载状态
       danmuLoadingRef.current = false;
+      // 释放全局加载锁
+      danmuGlobalLoadingRef.current = false;
     }
   };
 
@@ -1215,16 +1240,21 @@ function PlayPageClient() {
                 console.log('集数切换：根据用户设置开启弹幕显示');
               }
 
+              // 停止并重置弹幕，防止重复
+              plugin.stop();
+              plugin.reset();
+              console.log('集数切换：已停止并重置弹幕插件');
+
               const externalDanmu = await loadExternalDanmu();
               console.log('集数变化后外部弹幕加载结果:', externalDanmu);
 
               if (externalDanmu.length > 0) {
                 console.log('向播放器插件重新加载弹幕数据:', externalDanmu.length, '条');
                 plugin.load(externalDanmu);
+                plugin.start();
                 artPlayerRef.current.notice.show = `已加载 ${externalDanmu.length} 条弹幕`;
               } else {
                 console.log('集数变化后没有弹幕数据可加载');
-                plugin.load([]);
                 // 延迟显示无弹幕提示，避免在加载过程中误显示
                 setTimeout(() => {
                   if (externalDanmuEnabledRef.current && artPlayerRef.current) {
@@ -1930,16 +1960,21 @@ function PlayPageClient() {
                     console.log('换源：根据用户设置开启弹幕显示');
                   }
 
+                  // 停止并重置弹幕，防止重复
+                  plugin.stop();
+                  plugin.reset();
+                  console.log('换源：已停止并重置弹幕插件');
+
                   const externalDanmu = await loadExternalDanmu();
                   console.log('切换后重新加载弹幕结果:', externalDanmu);
 
                   if (externalDanmu.length > 0) {
                     console.log('切换后向播放器插件加载弹幕数据:', externalDanmu.length, '条');
                     plugin.load(externalDanmu);
+                    plugin.start();
                     artPlayerRef.current.notice.show = `已加载 ${externalDanmu.length} 条弹幕`;
                   } else {
                     console.log('切换后没有弹幕数据可加载');
-                    plugin.load([]);
                     // 延迟显示无弹幕提示，避免在加载过程中误显示
                     setTimeout(() => {
                       if (externalDanmuEnabledRef.current && artPlayerRef.current) {
@@ -2221,7 +2256,7 @@ function PlayPageClient() {
               const devicePerformance = getDevicePerformance()
               console.log(`🎯 设备性能等级: ${devicePerformance}`)
 
-              // 🚀 根据设备性能调整弹幕渲染策略（不减少数量）
+              // 🚀 激进性能优化：针对大量弹幕的渲染策略
               const getOptimizedConfig = () => {
                 const baseConfig = {
                   danmuku: [], // 初始为空数组，后续通过load方法加载
@@ -2229,13 +2264,13 @@ function PlayPageClient() {
                   opacity: parseFloat(localStorage.getItem('danmaku_opacity') || '0.8'),
                   fontSize: parseInt(localStorage.getItem('danmaku_fontSize') || '25'),
                   color: '#FFFFFF',
-                  mode: 0 as const, // 修正类型：使用 const assertion
+                  mode: 0 as const,
                   modes: JSON.parse(localStorage.getItem('danmaku_modes') || '[0, 1, 2]') as Array<0 | 1 | 2>,
                   margin: JSON.parse(localStorage.getItem('danmaku_margin') || '[10, "75%"]') as [number | `${number}%`, number | `${number}%`],
                   visible: localStorage.getItem('danmaku_visible') !== 'false',
                   emitter: true, // 开启官方弹幕发射器
                   maxLength: 200,
-                  lockTime: 5, // v5.2.0优化: 减少锁定时间，降低快进时的延迟
+                  lockTime: 1, // 🎯 进一步减少锁定时间，提升进度跳转响应
                   theme: 'dark' as const,
                   width: (() => {
                     // 检测是否为全屏模式
@@ -2247,30 +2282,69 @@ function PlayPageClient() {
                     return checkFullscreen() ? 210 : 300;
                   })(),
 
-                  // 🧠 智能过滤器 - 只过滤有问题的弹幕，不减少数量
+                  // 🎯 激进优化配置 - 保持功能完整性
+                  antiOverlap: devicePerformance === 'high', // 只有高性能设备开启防重叠，避免重叠计算
+                  synchronousPlayback: true, // ✅ 必须保持true！确保弹幕与视频播放速度同步
+                  heatmap: false, // 关闭热力图，减少DOM计算开销
+
+                  // 🧠 智能过滤器 - 激进性能优化，过滤影响性能的弹幕
                   filter: (danmu: any) => {
-                    // 过滤空弹幕
+                    // 基础验证
                     if (!danmu.text || !danmu.text.trim()) return false
 
-                    // 过滤超长弹幕（影响性能）
-                    if (danmu.text.length > 100) return false
 
-                    // 过滤可能导致渲染问题的特殊字符
-                    const specialCharCount = (danmu.text.match(/[^\u4e00-\u9fa5a-zA-Z0-9\s.,!?；，。！？]/g) || []).length
-                    if (specialCharCount > 10) return false
+                    const text = danmu.text.trim();
 
-                    return true // 保持尽可能多的弹幕
+                    // 🔥 激进长度限制，减少DOM渲染负担
+                    if (text.length > 50) return false // 从100改为50，更激进
+                    if (text.length < 2) return false  // 过短弹幕通常无意义
+
+                    // 🔥 激进特殊字符过滤，避免复杂渲染
+                    const specialCharCount = (text.match(/[^\u4e00-\u9fa5a-zA-Z0-9\s.,!?；，。！？]/g) || []).length
+                    if (specialCharCount > 5) return false // 从10改为5，更严格
+
+                    // 🔥 过滤纯数字或纯符号弹幕，减少无意义渲染
+                    if (/^\d+$/.test(text)) return false
+                    if (/^[!@#$%^&*()_+\-=[\]{};':"\\|,.<>/?]+$/.test(text)) return false
+
+                    // 🔥 过滤常见低质量弹幕，提升整体质量
+                    const lowQualityPatterns = [
+                      /^666+$/, /^好+$/, /^哈+$/, /^啊+$/,
+                      /^[!！.。？?]+$/, /^牛+$/, /^强+$/
+                    ];
+                    if (lowQualityPatterns.some(pattern => pattern.test(text))) return false
+
+                    return true
                   },
 
-                  // 🎯 保持原有的 beforeVisible 逻辑，只添加性能优化
+                  // 🚀 激进性能优化的动态密度控制
                   beforeVisible: (danmu: any) => {
                     return new Promise<boolean>((resolve) => {
-                      // 低性能设备添加CSS动画优化
-                      if (devicePerformance === 'low' && danmu.$ref && danmu.mode === 0) {
-                        // 添加硬件加速样式
-                        danmu.$ref.classList.add('art-danmuku-optimized')
-                        danmu.$ref.style.willChange = 'transform'
-                        danmu.$ref.style.backfaceVisibility = 'hidden'
+                      // 🎯 动态弹幕密度控制 - 根据当前屏幕上的弹幕数量决定是否显示
+                      const currentVisibleCount = document.querySelectorAll('.art-danmuku [data-state="emit"]').length;
+                      const maxConcurrentDanmu = devicePerformance === 'high' ? 60 :
+                        devicePerformance === 'medium' ? 40 : 25;
+
+                      if (currentVisibleCount >= maxConcurrentDanmu) {
+                        // 🔥 当弹幕密度过高时，随机丢弃部分弹幕，保持流畅性
+                        const dropRate = devicePerformance === 'high' ? 0.1 :
+                          devicePerformance === 'medium' ? 0.3 : 0.5;
+                        if (Math.random() < dropRate) {
+                          resolve(false); // 丢弃当前弹幕
+                          return;
+                        }
+                      }
+
+                      // 🎯 硬件加速优化
+                      if (danmu.$ref && danmu.mode === 0) {
+                        danmu.$ref.style.willChange = 'transform';
+                        danmu.$ref.style.backfaceVisibility = 'hidden';
+
+                        // 低性能设备额外优化
+                        if (devicePerformance === 'low') {
+                          danmu.$ref.style.transform = 'translateZ(0)'; // 强制硬件加速
+                          danmu.$ref.classList.add('art-danmuku-optimized');
+                        }
                       }
                       resolve(true)
                     })
@@ -2926,8 +3000,23 @@ function PlayPageClient() {
           console.log('播放器已就绪，等待弹幕配置加载完成');
           const waitForConfigAndLoadDanmu = async () => {
             // 等待弹幕配置加载完成
-            while (!danmakuConfigLoaded) {
+            let waitCount = 0;
+            while (!danmakuConfigLoaded && waitCount < 100) { // 最多等待10秒
               await new Promise(resolve => setTimeout(resolve, 100));
+              waitCount++;
+            }
+
+            if (!danmakuConfigLoaded) {
+              console.warn('弹幕配置加载超时，使用默认配置');
+              // 超时后使用localStorage作为后备
+              if (typeof window !== 'undefined') {
+                const v = localStorage.getItem('enable_external_danmu');
+                if (v !== null) {
+                  const enabled = v === 'true';
+                  externalDanmuEnabledRef.current = enabled;
+                  console.log('使用localStorage后备配置:', enabled);
+                }
+              }
             }
 
             console.log('弹幕配置已加载，开始同步弹幕状态，当前开关状态:', externalDanmuEnabledRef.current);
@@ -2943,6 +3032,10 @@ function PlayPageClient() {
                     plugin.show();
                     console.log('根据配置开启弹幕显示');
                   }
+
+                  // 先清空当前弹幕，防止重复显示
+                  plugin.load([]);
+                  console.log('播放器就绪：已清空旧弹幕数据');
 
                   // 加载外部弹幕数据
                   const externalDanmu = await loadExternalDanmu();
@@ -2983,7 +3076,8 @@ function PlayPageClient() {
             }
           };
 
-          setTimeout(waitForConfigAndLoadDanmu, 1000); // 延迟1秒确保插件完全初始化
+          // 减少延迟时间，提高响应速度
+          setTimeout(waitForConfigAndLoadDanmu, 500); // 从1000ms减少到500ms
 
           // 监听弹幕插件的显示/隐藏事件，自动保存状态到localStorage
           artPlayerRef.current.on('artplayerPluginDanmuku:show', () => {
@@ -3337,7 +3431,7 @@ function PlayPageClient() {
 
   if (loading) {
     return (
-      <PageLayout>
+      <PageLayout defaultSidebarCollapsed={true}>
         <div className='flex items-center justify-center min-h-screen bg-transparent'>
           <div className='text-center max-w-md mx-auto px-6'>
             {/* 动画影院图标 */}
@@ -3424,7 +3518,7 @@ function PlayPageClient() {
 
   if (error) {
     return (
-      <PageLayout>
+      <PageLayout defaultSidebarCollapsed={true}>
         <div className='flex items-center justify-center min-h-screen bg-transparent'>
           <div className='text-center max-w-md mx-auto px-6'>
             {/* 错误图标 */}
@@ -3489,7 +3583,7 @@ function PlayPageClient() {
   }
 
   return (
-    <PageLayout>
+    <PageLayout defaultSidebarCollapsed={true}>
       <div className='flex flex-col gap-3 py-4 px-5 lg:px-[3rem] 2xl:px-20'>
         {/* 第一行：影片标题 */}
         <div className='py-1'>
